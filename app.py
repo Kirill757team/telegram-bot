@@ -2,6 +2,7 @@ import os
 import sqlite3
 import datetime
 import asyncio
+import threading
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreCheckoutQueryHandler, MessageHandler, filters, ContextTypes
@@ -205,10 +206,7 @@ def run_bot():
     print("🚀 Запуск бота...")
     init_db()
     
-    # Создаём новый event loop для потока
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
+    # Создаём приложение
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
@@ -227,8 +225,14 @@ def run_bot():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    import threading
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.start()
-    port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host="0.0.0.0", port=port)
+    # Запускаем Flask в основном потоке, а бота в отдельном с правильной настройкой
+    def run_flask():
+        port = int(os.environ.get("PORT", 8080))
+        flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
+    
+    # Запускаем бота в основном потоке, а Flask в отдельном
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    run_bot()
