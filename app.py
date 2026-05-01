@@ -17,7 +17,7 @@ if not TELEGRAM_TOKEN:
     print("Ошибка: TELEGRAM_TOKEN не найден")
     exit(1)
 
-PRICE_STARS = 50
+PRICE_STARS = 10
 DAYS = 30
 TRIAL_DAYS = 3
 REFERRAL_BONUS = 7
@@ -293,7 +293,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "profile":
         await profile(update, context)
     elif data == "support":
-        await support(update, context)
+        # Исправленная поддержка
+        text = "📞 *Поддержка*\n\nПо всем вопросам обращайтесь:\n✉️ @Kirill757team_admin\n\nМы ответим в ближайшее время!"
+        await query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=back_keyboard()
+        )
     elif data == "help":
         await help_cmd(update, context)
     elif data == "back":
@@ -303,7 +309,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard(),
             parse_mode="Markdown"
         )
-
 # ==================== ПЛАТЕЖИ ====================
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
