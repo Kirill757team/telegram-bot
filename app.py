@@ -12,7 +12,7 @@ if not TELEGRAM_TOKEN:
     print("Ошибка: TELEGRAM_TOKEN не найден")
     exit(1)
 
-PRICE_STARS = 50
+PRICE_STARS = 10
 DAYS = 30
 TRIAL_DAYS = 3
 REFERRAL_BONUS = 7
@@ -31,14 +31,7 @@ def init_db():
                  (user_id INTEGER PRIMARY KEY, 
                   sub_end DATE,
                   trial_used BOOLEAN DEFAULT 0,
-                  referrer_id INTEGER,
-                  language TEXT DEFAULT 'ru',
-                  notifications BOOLEAN DEFAULT 1)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS feedback
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  message TEXT,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                  referrer_id INTEGER)''')
     conn.commit()
     conn.close()
     print("✅ База данных готова")
@@ -46,38 +39,17 @@ def init_db():
 def get_user(user_id):
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
-    c.execute("SELECT user_id, sub_end, trial_used, referrer_id, language, notifications FROM users WHERE user_id = ?", (user_id,))
+    c.execute("SELECT user_id, sub_end, trial_used, referrer_id FROM users WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     conn.close()
     if row:
-        return {"user_id": row[0], "sub_end": row[1], "trial_used": bool(row[2]), "referrer_id": row[3], "language": row[4] or 'ru', "notifications": bool(row[5])}
+        return {"user_id": row[0], "sub_end": row[1], "trial_used": bool(row[2]), "referrer_id": row[3]}
     return None
 
 def create_user(user_id, referrer_id=None):
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, referrer_id, language, notifications) VALUES (?, ?, 'ru', 1)", (user_id, referrer_id))
-    conn.commit()
-    conn.close()
-
-def save_feedback(user_id, message):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO feedback (user_id, message) VALUES (?, ?)", (user_id, message))
-    conn.commit()
-    conn.close()
-
-def update_language(user_id, lang):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("UPDATE users SET language = ? WHERE user_id = ?", (lang, user_id))
-    conn.commit()
-    conn.close()
-
-def update_notifications(user_id, enabled):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("UPDATE users SET notifications = ? WHERE user_id = ?", (enabled, user_id))
+    c.execute("INSERT OR IGNORE INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, referrer_id))
     conn.commit()
     conn.close()
 
@@ -120,53 +92,14 @@ def add_trial(user_id):
     conn.commit()
     conn.close()
 
-def get_referral_stats(user_id):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
-    total = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM referral_bonuses WHERE referrer_id = ?", (user_id,))
-    conn.close()
-    return total, 0
-
 def main_keyboard():
     kb = [
         [InlineKeyboardButton("🤖 Задать вопрос", callback_data="ask")],
         [InlineKeyboardButton("⭐ Подписка", callback_data="sub")],
         [InlineKeyboardButton("👥 Рефералы", callback_data="ref")],
         [InlineKeyboardButton("📊 Профиль", callback_data="profile")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-        [InlineKeyboardButton("📞 Поддержка", callback_data="support")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
     ]
-    return InlineKeyboardMarkup(kb)
-
-def settings_keyboard():
-    kb = [
-        [InlineKeyboardButton("🌐 Язык", callback_data="lang_menu")],
-        [InlineKeyboardButton("🔔 Уведомления", callback_data="notif_menu")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back")]
-    ]
-    return InlineKeyboardMarkup(kb)
-
-def lang_keyboard():
-    kb = [
-        [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="settings")]
-    ]
-    return InlineKeyboardMarkup(kb)
-
-def notif_keyboard(notif_enabled):
-    status = "✅ Вкл" if notif_enabled else "❌ Выкл"
-    kb = [
-        [InlineKeyboardButton(f"Уведомления: {status}", callback_data="toggle_notif")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="settings")]
-    ]
-    return InlineKeyboardMarkup(kb)
-
-def back_keyboard():
-    kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
     return InlineKeyboardMarkup(kb)
 
 async def start(update, context):
@@ -223,15 +156,12 @@ async def referral(update, context):
     uid = update.effective_user.id
     bot_name = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_name}?start={uid}"
-    total, _ = get_referral_stats(uid)
-    await update.message.reply_text(f"👥 *Реферальная система*\n\n🔗 Ваша ссылка:\n`{link}`\n\n📊 Приглашено: {total}\n🎁 За друга +{REFERRAL_BONUS} дней", parse_mode="Markdown")
+    await update.message.reply_text(f"👥 *Реферальная ссылка:*\n`{link}`\n\nЗа друга +{REFERRAL_BONUS} дней", parse_mode="Markdown")
 
 async def profile(update, context):
     uid = update.effective_user.id
-    user = get_user(uid)
     st = "✅ Активна" if has_sub(uid) else "❌ Не активна"
-    total, _ = get_referral_stats(uid)
-    await update.message.reply_text(f"📊 *Профиль*\n\n🆔 ID: `{uid}`\n⭐ Статус: {st}\n👥 Приглашено: {total}\n🌐 Язык: {user['language'] if user else 'ru'}\n🔔 Уведомления: {'Вкл' if (user['notifications'] if user else True) else 'Выкл'}", parse_mode="Markdown")
+    await update.message.reply_text(f"📊 *Профиль*\n\n🆔 ID: `{uid}`\n⭐ Статус: {st}", parse_mode="Markdown")
 
 async def ask(update, context):
     if not has_sub(update.effective_user.id):
@@ -241,71 +171,18 @@ async def ask(update, context):
         await update.message.reply_text("🤖 Использование: /ask ваш вопрос")
         return
     q = ' '.join(context.args)
-    await update.message.reply_text(f"🤖 Ваш вопрос: {q}\n(ИИ будет добавлен позже)")
+    await update.message.reply_text(f"🤖 Ваш вопрос: {q}")
 
 async def help_cmd(update, context):
     await update.message.reply_text(
         "📖 *Справка*\n\n"
         "/start - Главное меню\n"
         "/subscribe - Купить подписку\n"
-        "/status - Статус подписки\n"
+        "/status - Статус\n"
         "/trial - Пробный период\n"
         "/referral - Реферальная ссылка\n"
-        "/profile - Мой профиль\n"
-        "/ask - Задать вопрос ИИ\n"
-        "/settings - Настройки\n"
-        "/language - Сменить язык\n"
-        "/notify - Уведомления\n"
-        "/support - Поддержка\n"
-        "/feedback - Отзыв\n"
-        "/faq - Частые вопросы\n"
-        "/terms - Условия",
-        parse_mode="Markdown"
-    )
-
-async def settings(update, context):
-    await update.message.reply_text("⚙️ *Настройки*", reply_markup=settings_keyboard(), parse_mode="Markdown")
-
-async def language(update, context):
-    await update.message.reply_text("🌐 *Выберите язык*", reply_markup=lang_keyboard(), parse_mode="Markdown")
-
-async def notifications(update, context):
-    uid = update.effective_user.id
-    user = get_user(uid)
-    enabled = user["notifications"] if user else True
-    await update.message.reply_text("🔔 *Уведомления*", reply_markup=notif_keyboard(enabled), parse_mode="Markdown")
-
-async def support(update, context):
-    await update.message.reply_text(
-        "📞 *Поддержка*\n\n"
-        "• По вопросам: @Kirill757team_admin\n"
-        "• Или через /feedback",
-        parse_mode="Markdown"
-    )
-
-async def feedback(update, context):
-    if not context.args:
-        await update.message.reply_text("📝 Использование: /feedback ваш отзыв")
-        return
-    msg = ' '.join(context.args)
-    save_feedback(update.effective_user.id, msg)
-    await update.message.reply_text("✅ Спасибо за отзыв!")
-
-async def faq(update, context):
-    await update.message.reply_text(
-        "❓ *Частые вопросы*\n\n"
-        f"**1. Сколько стоит подписка?**\n{PRICE_STARS} Stars на {DAYS} дней\n\n"
-        "**2. Как купить Stars?**\nЧерез App Store или Google Play\n\n"
-        "**3. Бот не отвечает?**\nПроверьте статус: /status",
-        parse_mode="Markdown"
-    )
-
-async def terms(update, context):
-    await update.message.reply_text(
-        "📜 *Условия использования*\n\n"
-        "1. Подписка не возвращается\n"
-        "2. Бот предоставляется 'как есть'\n"
-        "3. Мы не храним личные данные",
+        "/profile - Профиль\n"
+        "/ask - Задать вопрос",
         parse_mode="Markdown"
     )
 
@@ -313,41 +190,17 @@ async def callback(update, context):
     q = update.callback_query
     await q.answer()
     data = q.data
-    uid = q.from_user.id
     
     if data == "ask":
-        await q.edit_message_text("🤖 Используйте /ask ваш вопрос", reply_markup=back_keyboard())
+        await q.edit_message_text("🤖 Используйте /ask ваш вопрос")
     elif data == "sub":
         await subscribe(update, context)
     elif data == "ref":
         await referral(update, context)
     elif data == "profile":
         await profile(update, context)
-    elif data == "settings":
-        await q.edit_message_text("⚙️ *Настройки*", reply_markup=settings_keyboard(), parse_mode="Markdown")
-    elif data == "support":
-        await q.edit_message_text("📞 *Поддержка*\n\nПо вопросам: @Kirill757team_admin", reply_markup=back_keyboard(), parse_mode="Markdown")
     elif data == "help":
         await help_cmd(update, context)
-    elif data == "back":
-        await q.edit_message_text("🌟 *Главное меню*", reply_markup=main_keyboard(), parse_mode="Markdown")
-    elif data == "lang_menu":
-        await q.edit_message_text("🌐 *Выберите язык*", reply_markup=lang_keyboard(), parse_mode="Markdown")
-    elif data == "lang_ru":
-        update_language(uid, "ru")
-        await q.edit_message_text("🇷🇺 Язык изменён на русский!", reply_markup=back_keyboard())
-    elif data == "lang_en":
-        update_language(uid, "en")
-        await q.edit_message_text("🇬🇧 Language changed to English!", reply_markup=back_keyboard())
-    elif data == "notif_menu":
-        user = get_user(uid)
-        enabled = user["notifications"] if user else True
-        await q.edit_message_text("🔔 *Уведомления*", reply_markup=notif_keyboard(enabled), parse_mode="Markdown")
-    elif data == "toggle_notif":
-        user = get_user(uid)
-        current = user["notifications"] if user else True
-        update_notifications(uid, not current)
-        await q.edit_message_text("🔔 *Уведомления*", reply_markup=notif_keyboard(not current), parse_mode="Markdown")
 
 async def pre_checkout(update, context):
     await update.pre_checkout_query.answer(ok=True)
@@ -368,33 +221,21 @@ def run_bot():
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    commands = [
-        ("start", "Главное меню"),
-        ("help", "Справка"),
-        ("subscribe", "Купить подписку"),
-        ("status", "Статус подписки"),
-        ("trial", "Пробный период"),
-        ("referral", "Реферальная ссылка"),
-        ("profile", "Мой профиль"),
-        ("ask", "Задать вопрос"),
-        ("settings", "Настройки"),
-        ("language", "Сменить язык"),
-        ("notify", "Уведомления"),
-        ("support", "Поддержка"),
-        ("feedback", "Отзыв"),
-        ("faq", "Частые вопросы"),
-        ("terms", "Условия"),
-    ]
-    
-    for cmd, desc in commands:
-        app.add_handler(CommandHandler(cmd, globals()[cmd if cmd != "notify" else "notifications"]))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("subscribe", subscribe))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("trial", trial))
+    app.add_handler(CommandHandler("referral", referral))
+    app.add_handler(CommandHandler("profile", profile))
+    app.add_handler(CommandHandler("ask", ask))
     
     app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, pay_success))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     
-    print("✅ Бот запущен со всеми функциями!")
+    print("✅ Бот запущен!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
