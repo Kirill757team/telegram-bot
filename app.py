@@ -92,16 +92,31 @@ def add_trial(user_id):
     conn.commit()
     conn.close()
 
+def get_referral_count(user_id):
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+# ==================== КЛАВИАТУРЫ ====================
 def main_keyboard():
     kb = [
         [InlineKeyboardButton("🤖 Задать вопрос", callback_data="ask")],
         [InlineKeyboardButton("⭐ Подписка", callback_data="sub")],
         [InlineKeyboardButton("👥 Рефералы", callback_data="ref")],
         [InlineKeyboardButton("📊 Профиль", callback_data="profile")],
+        [InlineKeyboardButton("📞 Поддержка", callback_data="support")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")]
     ]
     return InlineKeyboardMarkup(kb)
 
+def back_keyboard():
+    kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+    return InlineKeyboardMarkup(kb)
+
+# ==================== КОМАНДЫ ====================
 async def start(update, context):
     user = update.effective_user
     uid = user.id
@@ -118,10 +133,19 @@ async def start(update, context):
         if ref:
             add_sub(ref, REFERRAL_BONUS)
         add_trial(uid)
+    
     if has_sub(uid):
-        await update.message.reply_text(f"🌟 Привет, {user.first_name}!\n✅ Подписка активна!", reply_markup=main_keyboard())
+        await update.message.reply_text(
+            f"🌟 *Привет, {user.first_name}!*\n✅ Подписка активна!\n\nВыберите действие:",
+            reply_markup=main_keyboard(),
+            parse_mode="Markdown"
+        )
     else:
-        await update.message.reply_text(f"🌟 Привет, {user.first_name}!\n❌ Нет подписки. /subscribe", reply_markup=main_keyboard())
+        await update.message.reply_text(
+            f"🌟 *Привет, {user.first_name}!*\n❌ Нет активной подписки.\n\nИспользуйте /subscribe для оформления",
+            reply_markup=main_keyboard(),
+            parse_mode="Markdown"
+        )
 
 async def subscribe(update, context):
     try:
@@ -139,82 +163,176 @@ async def subscribe(update, context):
 
 async def status(update, context):
     if has_sub(update.effective_user.id):
-        await update.message.reply_text("✅ Подписка активна!")
+        await update.message.reply_text("✅ *Подписка активна!*", parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Нет подписки. /subscribe")
+        await update.message.reply_text("❌ *Нет активной подписки*\n\nИспользуйте /subscribe", parse_mode="Markdown")
 
 async def trial(update, context):
     uid = update.effective_user.id
     user = get_user(uid)
     if user and user["trial_used"]:
-        await update.message.reply_text("❌ Пробный период уже использован!")
+        await update.message.reply_text("❌ *Пробный период уже использован!*", parse_mode="Markdown")
     else:
         add_trial(uid)
-        await update.message.reply_text(f"🎉 Пробный период активирован! {TRIAL_DAYS} дня")
+        await update.message.reply_text(f"🎉 *Пробный период активирован!*\n\n{TRIAL_DAYS} дня бесплатного доступа.", parse_mode="Markdown")
 
 async def referral(update, context):
     uid = update.effective_user.id
     bot_name = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_name}?start={uid}"
-    await update.message.reply_text(f"👥 *Реферальная ссылка:*\n`{link}`\n\nЗа друга +{REFERRAL_BONUS} дней", parse_mode="Markdown")
+    count = get_referral_count(uid)
+    await update.message.reply_text(
+        f"👥 *Реферальная система*\n\n"
+        f"🔗 Ваша ссылка:\n`{link}`\n\n"
+        f"📊 Приглашено друзей: {count}\n"
+        f"🎁 За каждого друга: +{REFERRAL_BONUS} дней подписки\n\n"
+        f"*Как это работает:*\n"
+        f"1. Отправьте ссылку другу\n"
+        f"2. Друг переходит по ссылке\n"
+        f"3. Вы получаете бонусные дни!",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard()
+    )
 
 async def profile(update, context):
     uid = update.effective_user.id
-    st = "✅ Активна" if has_sub(uid) else "❌ Не активна"
-    await update.message.reply_text(f"📊 *Профиль*\n\n🆔 ID: `{uid}`\n⭐ Статус: {st}", parse_mode="Markdown")
+    user = get_user(uid)
+    status_text = "✅ Активна" if has_sub(uid) else "❌ Не активна"
+    count = get_referral_count(uid)
+    
+    await update.message.reply_text(
+        f"📊 *Ваш профиль*\n\n"
+        f"🆔 ID: `{uid}`\n"
+        f"⭐ Статус подписки: {status_text}\n"
+        f"👥 Приглашено друзей: {count}\n"
+        f"🎁 Бонус за друга: +{REFERRAL_BONUS} дней\n\n"
+        f"📅 Пробный период: {'использован' if user and user['trial_used'] else 'доступен'}",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard()
+    )
 
 async def ask(update, context):
     if not has_sub(update.effective_user.id):
-        await update.message.reply_text("❌ Нет подписки. /subscribe")
+        await update.message.reply_text("❌ *Нет активной подписки*\n\nИспользуйте /subscribe или нажмите кнопку '⭐ Подписка'", parse_mode="Markdown")
         return
     if not context.args:
-        await update.message.reply_text("🤖 Использование: /ask ваш вопрос")
+        await update.message.reply_text(
+            "🤖 *Как задать вопрос:*\n\n"
+            "Напишите: `/ask ваш вопрос`\n"
+            "Пример: `/ask Что такое Python?`",
+            parse_mode="Markdown"
+        )
         return
     q = ' '.join(context.args)
-    await update.message.reply_text(f"🤖 Ваш вопрос: {q}")
+    await update.message.reply_text(f"🤖 *Ваш вопрос:*\n{q}\n\n(ИИ будет добавлен позже)", parse_mode="Markdown")
 
 async def help_cmd(update, context):
     await update.message.reply_text(
-        "📖 *Справка*\n\n"
+        "📖 *Справка по командам*\n\n"
+        "🤖 *Основные:*\n"
         "/start - Главное меню\n"
+        "/help - Эта справка\n\n"
+        "⭐ *Подписка:*\n"
         "/subscribe - Купить подписку\n"
-        "/status - Статус\n"
-        "/trial - Пробный период\n"
-        "/referral - Реферальная ссылка\n"
-        "/profile - Профиль\n"
-        "/ask - Задать вопрос",
+        "/status - Статус подписки\n"
+        "/trial - Пробный период\n\n"
+        "👥 *Рефералы:*\n"
+        "/referral - Реферальная ссылка\n\n"
+        "📊 *Профиль:*\n"
+        "/profile - Мой профиль\n\n"
+        "🤖 *ИИ:*\n"
+        "/ask [вопрос] - Задать вопрос\n\n"
+        "📞 *Поддержка:*\n"
+        "/support - Связаться с поддержкой",
         parse_mode="Markdown"
     )
 
+async def support(update, context):
+    await update.message.reply_text(
+        "📞 *Поддержка*\n\n"
+        "По всем вопросам обращайтесь:\n"
+        "✉️ Telegram: @Kirill757team_admin\n\n"
+        "Мы ответим в ближайшее время!",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard()
+    )
+
+# ==================== CALLBACK ====================
 async def callback(update, context):
     q = update.callback_query
     await q.answer()
     data = q.data
+    uid = q.from_user.id
     
     if data == "ask":
-        await q.edit_message_text("🤖 Используйте /ask ваш вопрос")
+        await q.edit_message_text(
+            "🤖 *Задать вопрос*\n\n"
+            "Используйте команду:\n`/ask ваш вопрос`\n\n"
+            "Пример: `/ask Как дела?`",
+            parse_mode="Markdown",
+            reply_markup=back_keyboard()
+        )
     elif data == "sub":
         await subscribe(update, context)
     elif data == "ref":
         await referral(update, context)
     elif data == "profile":
         await profile(update, context)
+    elif data == "support":
+        await q.edit_message_text(
+            "📞 *Поддержка*\n\n"
+            "По всем вопросам: @Kirill757team_admin",
+            parse_mode="Markdown",
+            reply_markup=back_keyboard()
+        )
     elif data == "help":
         await help_cmd(update, context)
+    elif data == "back":
+        if has_sub(uid):
+            await q.edit_message_text(
+                "🌟 *Главное меню*\n\n✅ Подписка активна",
+                reply_markup=main_keyboard(),
+                parse_mode="Markdown"
+            )
+        else:
+            await q.edit_message_text(
+                "🌟 *Главное меню*\n\n❌ Нет активной подписки",
+                reply_markup=main_keyboard(),
+                parse_mode="Markdown"
+            )
 
+# ==================== ПЛАТЕЖИ ====================
 async def pre_checkout(update, context):
     await update.pre_checkout_query.answer(ok=True)
 
 async def pay_success(update, context):
     add_sub(update.effective_user.id, DAYS)
-    await update.message.reply_text("🎉 Оплата прошла! Подписка активирована.", reply_markup=main_keyboard())
+    await update.message.reply_text(
+        "🎉 *Оплата прошла успешно!*\n\n"
+        f"Подписка на {DAYS} дней активирована.\n"
+        "Спасибо, что выбрали нас! 🚀",
+        parse_mode="Markdown",
+        reply_markup=main_keyboard()
+    )
 
 async def text_msg(update, context):
-    if has_sub(update.effective_user.id):
-        await update.message.reply_text("Используйте /ask для вопроса", reply_markup=main_keyboard())
+    uid = update.effective_user.id
+    if has_sub(uid):
+        await update.message.reply_text(
+            "🤖 *Используйте команду /ask для вопросов*\n\n"
+            "Например: `/ask Как дела?`",
+            parse_mode="Markdown",
+            reply_markup=main_keyboard()
+        )
     else:
-        await update.message.reply_text("❌ Нет подписки. /subscribe", reply_markup=main_keyboard())
+        await update.message.reply_text(
+            "❌ *Нет активной подписки*\n\n"
+            "Нажмите кнопку '⭐ Подписка' или используйте /subscribe",
+            parse_mode="Markdown",
+            reply_markup=main_keyboard()
+        )
 
+# ==================== ЗАПУСК ====================
 def run_bot():
     print("🚀 Запуск бота...")
     init_db()
@@ -229,13 +347,14 @@ def run_bot():
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("ask", ask))
+    app.add_handler(CommandHandler("support", support))
     
     app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, pay_success))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     
-    print("✅ Бот запущен!")
+    print("✅ Бот запущен со всеми функциями!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
