@@ -3,7 +3,6 @@ import sqlite3
 import datetime
 import threading
 import logging
-import requests
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreCheckoutQueryHandler, MessageHandler, filters, ContextTypes
@@ -11,7 +10,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreC
 logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY = "AIzaSyBUZk0bq3bto6Kwz7S2XH2ga8UNH3N_KvA"
 
 if not TELEGRAM_TOKEN:
     print("Ошибка: TELEGRAM_TOKEN не найден")
@@ -29,6 +27,7 @@ flask_app = Flask(__name__)
 def health():
     return "OK", 200
 
+# ==================== БАЗА ДАННЫХ ====================
 def init_db():
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
@@ -105,21 +104,7 @@ def get_referral_count(user_id):
     conn.close()
     return count
 
-async def ask_gemini(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    data = {"contents": [{"parts": [{"text": prompt}]}]}
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        result = response.json()
-        if response.status_code == 200:
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            return None
-    except Exception as e:
-        print(f"Gemini ошибка: {e}")
-        return None
-
+# ==================== КЛАВИАТУРЫ ====================
 def main_keyboard():
     kb = [
         [InlineKeyboardButton("🤖 Задать вопрос", callback_data="ask")],
@@ -135,6 +120,7 @@ def back_keyboard():
     kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
     return InlineKeyboardMarkup(kb)
 
+# ==================== КОМАНДЫ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
@@ -151,6 +137,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ref:
             add_sub(ref, REFERRAL_BONUS)
         add_trial(uid)
+    
     status_text = "✅ Подписка активна" if has_sub(uid) else "❌ Нет подписки"
     await update.message.reply_text(
         f"🌟 *Привет, {user.first_name}!*\n\n{status_text}\n\n👇 Выберите действие:",
@@ -164,22 +151,20 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ *Нет активной подписки*\n\nИспользуйте кнопку '⭐ Подписка'", parse_mode="Markdown")
         return
     if not context.args:
-        await update.message.reply_text("🤖 *Как задать вопрос:*\n\n`/ask ваш вопрос`\n\nПример: `/ask Что такое Python?`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "🤖 *Как задать вопрос:*\n\n`/ask ваш вопрос`\n\nПример: `/ask Что такое Python?`",
+            parse_mode="Markdown"
+        )
         return
-    question = ' '.join(context.args)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    response = await ask_gemini(question)
-    if response:
-        await update.message.reply_text(response, parse_mode="Markdown")
-    else:
-        await update.message.reply_text("😔 *Извините, ИИ временно недоступен*\n\nПопробуйте позже.", parse_mode="Markdown")
+    q = ' '.join(context.args)
+    await update.message.reply_text(f"🤖 *Ваш вопрос:*\n{q}\n\n(ИИ будет добавлен позже)", parse_mode="Markdown")
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_invoice(
             chat_id=update.effective_user.id,
             title=f"Подписка на {DAYS} дней",
-            description=f"Доступ к ИИ-боту на {DAYS} дней",
+            description=f"Доступ к боту на {DAYS} дней",
             payload=f"sub_{update.effective_user.id}",
             provider_token="",
             currency="XTR",
@@ -192,7 +177,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if has_sub(update.effective_user.id):
         await update.message.reply_text("✅ *Подписка активна!*", parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ *Нет активной подписки*\n\nИспользуйте кнопку '⭐ Подписка'", parse_mode="Markdown")
+        await update.message.reply_text("❌ *Нет активной подписки*\n\nИспользуйте /subscribe", parse_mode="Markdown")
 
 async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -209,8 +194,10 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{bot_name}?start={uid}"
     count = get_referral_count(uid)
     text = f"👥 *Реферальная система*\n\n🔗 `{link}`\n\n📊 Приглашено: {count}\n🎁 Бонус: +{REFERRAL_BONUS} дней"
+    
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
@@ -219,37 +206,42 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "✅ Активна" if has_sub(uid) else "❌ Не активна"
     count = get_referral_count(uid)
     text = f"📊 *Ваш профиль*\n\n🆔 ID: `{uid}`\n⭐ Статус: {status_text}\n👥 Приглашено: {count}\n🎁 Бонус: +{REFERRAL_BONUS} дней"
+    
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "📞 *Поддержка*\n\nПо всем вопросам обращайтесь:\n✉️ @Kirill757team_admin\n\nМы ответим в ближайшее время!"
+    text = "📞 *Поддержка*\n\nПо всем вопросам: @Kirill757team_admin"
+    
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "❓ *Помощь*\n\n"
-        "📋 *Доступные команды:*\n\n"
-        "🤖 `/ask [вопрос]` - Задать вопрос ИИ\n"
-        "⭐ `/subscribe` - Купить подписку\n"
-        "📊 `/status` - Статус подписки\n"
-        "🎁 `/trial` - Пробный период (3 дня)\n"
-        "👥 `/referral` - Реферальная ссылка\n"
-        "📊 `/profile` - Профиль\n"
-        "📞 `/support` - Поддержка\n"
-        "❓ `/help` - Эта справка\n\n"
-        "💡 Используйте кнопки в меню!"
+        "/start - Главное меню\n"
+        "/ask - Задать вопрос\n"
+        "/subscribe - Купить подписку\n"
+        "/status - Статус подписки\n"
+        "/trial - Пробный период\n"
+        "/referral - Реферальная ссылка\n"
+        "/profile - Профиль\n"
+        "/support - Поддержка"
     )
+    
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
+# ==================== ОБРАБОТЧИК КНОПОК ====================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -257,8 +249,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = query.from_user.id
     
     if data == "ask":
-        await query.edit_message_text(
-            "🤖 *Задать вопрос ИИ*\n\nИспользуйте: `/ask ваш вопрос`\n\nПример: `/ask Что такое Python?`",
+        await query.message.reply_text(
+            "🤖 *Задать вопрос*\n\nИспользуйте: `/ask ваш вопрос`\n\nПример: `/ask Как дела?`",
             parse_mode="Markdown",
             reply_markup=back_keyboard()
         )
@@ -274,19 +266,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_cmd(update, context)
     elif data == "back":
         status_text = "✅ Подписка активна" if has_sub(uid) else "❌ Нет подписки"
-        await query.edit_message_text(
+        await query.message.reply_text(
             f"🌟 *Главное меню*\n\n{status_text}\n\n👇 Выберите действие:",
             reply_markup=main_keyboard(),
             parse_mode="Markdown"
         )
 
+# ==================== ПЛАТЕЖИ ====================
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
 async def pay_success(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_sub(update.effective_user.id, DAYS)
     await update.message.reply_text(
-        f"🎉 *Оплата прошла успешно!*\n\nПодписка активирована на {DAYS} дней.\n\nСпасибо! 🚀",
+        "🎉 *Оплата прошла успешно!*\n\nПодписка активирована на {DAYS} дней.",
         parse_mode="Markdown",
         reply_markup=main_keyboard()
     )
@@ -295,21 +288,24 @@ async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if has_sub(uid):
         await update.message.reply_text(
-            "🤖 *Используйте /ask для вопросов ИИ*",
+            "🤖 *Используйте /ask для вопросов*",
             parse_mode="Markdown",
             reply_markup=main_keyboard()
         )
     else:
         await update.message.reply_text(
-            "❌ *Нет активной подписки*\n\nНажмите '⭐ Подписка'",
+            "❌ *Нет активной подписки*\n\nНажмите кнопку '⭐ Подписка'",
             parse_mode="Markdown",
             reply_markup=main_keyboard()
         )
 
+# ==================== ЗАПУСК ====================
 def run_bot():
     print("🚀 Запуск бота...")
     init_db()
+    
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("subscribe", subscribe))
@@ -319,10 +315,12 @@ def run_bot():
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("support", support))
     app.add_handler(CommandHandler("help", help_cmd))
+    
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, pay_success))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
+    
     print("✅ Бот запущен со всеми функциями!")
     app.run_polling(drop_pending_updates=True)
 
@@ -330,7 +328,9 @@ if __name__ == "__main__":
     def run_flask():
         port = int(os.environ.get("PORT", 8080))
         flask_app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+    
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
+    
     run_bot()
