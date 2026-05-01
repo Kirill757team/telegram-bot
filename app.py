@@ -3,7 +3,7 @@ import threading
 import logging
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # Настройка логов
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +42,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard(),
         parse_mode="Markdown"
     )
-    return
 
 async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -55,18 +54,16 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-    return
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = f"📊 *Профиль*\n\n🆔 ID: `{user_id}`\n⭐ Подписка: активна"
+    text = f"📊 *Профиль*\n\n🆔 ID: `{user_id}`"
     
     if update.callback_query:
         await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
         await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-    return
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📞 *Поддержка*\n\nПо всем вопросам: @Kirill757team_admin"
@@ -76,7 +73,6 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-    return
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "❓ *Помощь*\n\n/start - Главное меню\n/referral - Реферальная ссылка\n/profile - Профиль\n/support - Поддержка"
@@ -86,17 +82,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-    return
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
 
 # ==================== ОБРАБОТЧИК КНОПОК ====================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     data = query.data
-    
-    print(f"Нажата кнопка: {data}")
     
     if data == "referral":
         await referral(update, context)
@@ -112,10 +103,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard(),
             parse_mode="Markdown"
         )
-        await query.answer()
-    
-    await query.answer()
-    return
 
 # ==================== ТЕКСТ ====================
 async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,18 +121,13 @@ def run_bot():
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("support", support))
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("cancel", cancel))
     
-    # Кнопки (callback)
     app.add_handler(CallbackQueryHandler(callback_handler))
-    
-    # Текст
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     
     print("✅ Бот запущен!")
@@ -161,3 +143,4 @@ if __name__ == "__main__":
     flask_thread.start()
     
     run_bot()
+    
